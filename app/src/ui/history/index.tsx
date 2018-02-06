@@ -6,9 +6,13 @@ import { Repository } from '../../models/repository'
 import { FileChange } from '../../models/status'
 import { Commit } from '../../models/commit'
 import { Dispatcher } from '../../lib/dispatcher'
-import { IHistoryState as IAppHistoryState } from '../../lib/app-state'
+import {
+  IHistoryState as IAppHistoryState,
+  ImageDiffType,
+} from '../../lib/app-state'
+import { encodePathAsUrl } from '../../lib/path'
 import { ThrottledScheduler } from '../lib/throttled-scheduler'
-import { IGitHubUser } from '../../lib/dispatcher'
+import { IGitHubUser } from '../../lib/databases'
 import { Resizable } from '../resizable'
 
 // At some point we'll make index.tsx only be exports
@@ -21,13 +25,13 @@ interface IHistoryProps {
   readonly history: IAppHistoryState
   readonly emoji: Map<string, string>
   readonly commits: Map<string, Commit>
-  readonly localCommitSHAs: ReadonlyArray<string>
   readonly commitSummaryWidth: number
   readonly gitHubUsers: Map<string, IGitHubUser>
+  readonly imageDiffType: ImageDiffType
 }
 
 interface IHistoryState {
-  readonly isExpanded: boolean,
+  readonly isExpanded: boolean
 }
 
 /** The History component. Contains the commit list, commit summary, and diff. */
@@ -43,7 +47,10 @@ export class History extends React.Component<IHistoryProps, IHistoryState> {
   }
 
   private onFileSelected = (file: FileChange) => {
-    this.props.dispatcher.changeHistoryFileSelection(this.props.repository, file)
+    this.props.dispatcher.changeHistoryFileSelection(
+      this.props.repository,
+      file
+    )
   }
 
   public componentWillUpdate(nextProps: IHistoryProps) {
@@ -66,43 +73,42 @@ export class History extends React.Component<IHistoryProps, IHistoryState> {
 
     if (!diff || !file) {
       // don't show both 'empty' messages
-      const message = files.length === 0
-        ? ''
-        : 'No file selected'
+      const message = files.length === 0 ? '' : 'No file selected'
 
       return (
-        <div className='panel blankslate' id='diff'>
-          { message }
+        <div className="panel blankslate" id="diff">
+          {message}
         </div>
       )
     }
 
     return (
-      <Diff repository={this.props.repository}
+      <Diff
+        repository={this.props.repository}
+        imageDiffType={this.props.imageDiffType}
         file={file}
         diff={diff}
         readOnly={true}
-        dispatcher={this.props.dispatcher} />
+        dispatcher={this.props.dispatcher}
+      />
     )
   }
 
   private renderCommitSummary(commit: Commit) {
-    const isLocal = this.props.localCommitSHAs.indexOf(commit.sha) > -1
-    const gitHubUser = this.props.gitHubUsers.get(commit.author.email.toLowerCase()) || null
+    const gitHubUser =
+      this.props.gitHubUsers.get(commit.author.email.toLowerCase()) || null
 
-    return <CommitSummary
-      summary={commit.summary}
-      body={commit.body}
-      sha={commit.sha}
-      author={commit.author}
-      files={this.props.history.changedFiles}
-      emoji={this.props.emoji}
-      repository={this.props.repository}
-      isLocal={isLocal}
-      gitHubUser={gitHubUser}
-      onExpandChanged={this.onExpandChanged}
-      isExpanded={this.state.isExpanded}
-    />
+    return (
+      <CommitSummary
+        commit={commit}
+        files={this.props.history.changedFiles}
+        emoji={this.props.emoji}
+        repository={this.props.repository}
+        gitHubUser={gitHubUser}
+        onExpandChanged={this.onExpandChanged}
+        isExpanded={this.state.isExpanded}
+      />
+    )
   }
 
   private onExpandChanged = (isExpanded: boolean) => {
@@ -120,11 +126,7 @@ export class History extends React.Component<IHistoryProps, IHistoryState> {
   private renderFileList() {
     const files = this.props.history.changedFiles
     if (files.length === 0) {
-      return (
-        <div className='fill-window'>
-          No files in commit
-        </div>
-      )
+      return <div className="fill-window">No files in commit</div>
     }
 
     // -1 for right hand side border
@@ -132,34 +134,36 @@ export class History extends React.Component<IHistoryProps, IHistoryState> {
 
     return (
       <FileList
-          files={files}
-          onSelectedFileChanged={this.onFileSelected}
-          selectedFile={this.props.history.selection.file}
-          availableWidth={availableWidth} />
-      )
+        files={files}
+        onSelectedFileChanged={this.onFileSelected}
+        selectedFile={this.props.history.selection.file}
+        availableWidth={availableWidth}
+      />
+    )
   }
 
   public render() {
     const sha = this.props.history.selection.sha
-    const commit = sha ? (this.props.commits.get(sha) || null) : null
+    const commit = sha ? this.props.commits.get(sha) || null : null
 
     if (!sha || !commit) {
-      return <NoCommitSelected/>
+      return <NoCommitSelected />
     }
 
     const className = this.state.isExpanded ? 'expanded' : 'collapsed'
 
     return (
-      <div id='history' className={className}>
+      <div id="history" className={className}>
         {this.renderCommitSummary(commit)}
-        <div id='commit-details'>
+        <div id="commit-details">
           <Resizable
             width={this.props.commitSummaryWidth}
             onResize={this.onCommitSummaryResize}
-            onReset={this.onCommitSummaryReset}>
-            { this.renderFileList() }
+            onReset={this.onCommitSummaryReset}
+          >
+            {this.renderFileList()}
           </Resizable>
-          { this.renderDiff(commit) }
+          {this.renderDiff(commit)}
         </div>
       </div>
     )
@@ -167,12 +171,14 @@ export class History extends React.Component<IHistoryProps, IHistoryState> {
 }
 
 function NoCommitSelected() {
-  const BlankSlateImage = `file:///${__dirname}/static/empty-no-commit.svg`
+  const BlankSlateImage = encodePathAsUrl(
+    __dirname,
+    'static/empty-no-commit.svg'
+  )
 
   return (
-    <div className='panel blankslate'>
-      <img src={BlankSlateImage} className='blankslate-image' />
-
+    <div className="panel blankslate">
+      <img src={BlankSlateImage} className="blankslate-image" />
       No commit selected
     </div>
   )

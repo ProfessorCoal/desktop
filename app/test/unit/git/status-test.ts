@@ -1,28 +1,25 @@
-/* tslint:disable:no-sync-functions */
+/* eslint-disable no-sync */
 
 import * as path from 'path'
 import { expect } from 'chai'
 
 import { Repository } from '../../../src/models/repository'
 import { getStatus } from '../../../src/lib/git/status'
-import { setupFixtureRepository, setupEmptyRepository } from '../../fixture-helper'
+import {
+  setupFixtureRepository,
+  setupEmptyRepository,
+} from '../../helpers/repositories'
 import { AppFileStatus } from '../../../src/models/status'
 import { GitProcess } from 'dugite'
 
 import * as fs from 'fs-extra'
-const temp = require('temp').track()
 
 describe('git/status', () => {
-
   let repository: Repository | null = null
 
   beforeEach(() => {
     const testRepoPath = setupFixtureRepository('test-repo')
     repository = new Repository(testRepoPath, -1, null, false)
-  })
-
-  after(() => {
-    temp.cleanupSync()
   })
 
   describe('getStatus', () => {
@@ -45,14 +42,13 @@ describe('git/status', () => {
     })
 
     it('reflects renames', async () => {
-
       const repo = await setupEmptyRepository()
 
       fs.writeFileSync(path.join(repo.path, 'foo'), 'foo\n')
 
-      await GitProcess.exec([ 'add', 'foo' ], repo.path)
-      await GitProcess.exec([ 'commit', '-m', 'Initial commit' ], repo.path)
-      await GitProcess.exec([ 'mv', 'foo', 'bar' ], repo.path)
+      await GitProcess.exec(['add', 'foo'], repo.path)
+      await GitProcess.exec(['commit', '-m', 'Initial commit'], repo.path)
+      await GitProcess.exec(['mv', 'foo', 'bar'], repo.path)
 
       const status = await getStatus(repo)
       const files = status.workingDirectory.files
@@ -64,11 +60,10 @@ describe('git/status', () => {
     })
 
     it('reflects copies', async () => {
-
       const testRepoPath = await setupFixtureRepository('copy-detection-status')
       repository = new Repository(testRepoPath, -1, null, false)
 
-      await GitProcess.exec([ 'add', '.' ], repository.path)
+      await GitProcess.exec(['add', '.'], repository.path)
 
       const status = await getStatus(repository)
       const files = status.workingDirectory.files

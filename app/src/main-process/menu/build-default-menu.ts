@@ -1,10 +1,23 @@
-import { shell, Menu, ipcMain } from 'electron'
-import { SharedProcess } from '../../shared-process/shared-process'
+import { Menu, ipcMain, shell, app } from 'electron'
 import { ensureItemIds } from './ensure-item-ids'
 import { MenuEvent } from './menu-event'
-import { getLogPath } from '../../lib/logging/get-log-path'
+import { getLogDirectoryPath } from '../../lib/logging/get-log-path'
+import { mkdirIfNeeded } from '../../lib/file-system'
 
-export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
+import { log } from '../log'
+import { openDirectorySafe } from '../shell'
+
+const defaultEditorLabel = __DARWIN__
+  ? 'Open in External Editor'
+  : 'Open in external editor'
+const defaultShellLabel = __DARWIN__
+  ? 'Open in Terminal'
+  : 'Open in Command Prompt'
+
+export function buildDefaultMenu(
+  editorLabel: string = defaultEditorLabel,
+  shellLabel: string = defaultShellLabel
+): Electron.Menu {
   const template = new Array<Electron.MenuItemConstructorOptions>()
   const separator: Electron.MenuItemConstructorOptions = { type: 'separator' }
 
@@ -23,6 +36,12 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
           id: 'preferences',
           accelerator: 'CmdOrCtrl+,',
           click: emit('show-preferences'),
+        },
+        separator,
+        {
+          label: 'Install Command Line Tool…',
+          id: 'install-cli',
+          click: emit('install-cli'),
         },
         separator,
         {
@@ -76,7 +95,7 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
         click: emit('show-preferences'),
       },
       separator,
-      { role: 'quit' },
+      { role: 'quit' }
     )
   }
 
@@ -147,32 +166,32 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
       {
         label: '&Reload',
         id: 'reload-window',
-        accelerator: 'CmdOrCtrl+R',
-        click (item: any, focusedWindow: Electron.BrowserWindow) {
+        // Ctrl+Alt is interpreted as AltGr on international keyboards and this
+        // can clash with other shortcuts. We should always use Ctrl+Shift for
+        // chorded shortcuts, but this menu item is not a user-facing feature
+        // so we are going to keep this one around and save Ctrl+Shift+R for
+        // a different shortcut in the future...
+        accelerator: 'CmdOrCtrl+Alt+R',
+        click(item: any, focusedWindow: Electron.BrowserWindow) {
           if (focusedWindow) {
             focusedWindow.reload()
           }
         },
-        visible: __RELEASE_ENV__ !== 'production',
+        visible: __RELEASE_CHANNEL__ === 'development',
       },
       {
         id: 'show-devtools',
-        label: __DARWIN__ ? 'Toggle Developer Tools' : '&Toggle developer tools',
+        label: __DARWIN__
+          ? 'Toggle Developer Tools'
+          : '&Toggle developer tools',
         accelerator: (() => {
           return __DARWIN__ ? 'Alt+Command+I' : 'Ctrl+Shift+I'
         })(),
-        click (item: any, focusedWindow: Electron.BrowserWindow) {
+        click(item: any, focusedWindow: Electron.BrowserWindow) {
           if (focusedWindow) {
             focusedWindow.webContents.toggleDevTools()
           }
         },
-      },
-      {
-        label: __DARWIN__ ? 'Debug Shared Process' : '&Debug shared process',
-        click (item: any, focusedWindow: Electron.BrowserWindow) {
-          sharedProcess.show()
-        },
-        visible: __RELEASE_ENV__ !== 'production',
       },
     ],
   })
@@ -202,19 +221,26 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
       {
         id: 'view-repository-on-github',
         label: __DARWIN__ ? 'View on GitHub' : '&View on GitHub',
-        accelerator: 'CmdOrCtrl+Alt+G',
+        accelerator: 'CmdOrCtrl+Shift+G',
         click: emit('view-repository-on-github'),
       },
       {
-        label: __DARWIN__ ? 'Open in Terminal' : 'Op&en command prompt',
+        label: shellLabel,
         id: 'open-in-shell',
+        accelerator: 'Ctrl+`',
         click: emit('open-in-shell'),
       },
       {
-        label: __DARWIN__ ? 'Open in Finder' : '&Open in Explorer',
+        label: __DARWIN__ ? 'Show in Finder' : 'Show in E&xplorer',
         id: 'open-working-directory',
         accelerator: 'CmdOrCtrl+Shift+F',
         click: emit('open-working-directory'),
+      },
+      {
+        label: editorLabel,
+        id: 'open-external-editor',
+        accelerator: 'CmdOrCtrl+Shift+A',
+        click: emit('open-external-editor'),
       },
       separator,
       {
@@ -247,12 +273,16 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
       },
       separator,
       {
-        label: __DARWIN__ ? 'Update From Default Branch' : '&Update from default branch',
+        label: __DARWIN__
+          ? 'Update From Default Branch'
+          : '&Update from default branch',
         id: 'update-branch',
         click: emit('update-branch'),
       },
       {
-        label: __DARWIN__ ? 'Merge Into Current Branch…' : '&Merge into current branch…',
+        label: __DARWIN__
+          ? 'Merge Into Current Branch…'
+          : '&Merge into current branch…',
         id: 'merge-branch',
         click: emit('merge-branch'),
       },
@@ -262,6 +292,12 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
         id: 'compare-branch',
         accelerator: 'CmdOrCtrl+Shift+C',
         click: emit('compare-branch'),
+      },
+      {
+        label: __DARWIN__ ? 'Create Pull Request' : 'Create &pull request',
+        id: 'create-pull-request',
+        accelerator: 'CmdOrCtrl+R',
+        click: emit('create-pull-request'),
       },
     ],
   })
@@ -286,15 +322,40 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
     },
   }
 
+  const contactSupportItem: Electron.MenuItemConstructorOptions = {
+    label: __DARWIN__ ? 'Contact GitHub Support…' : '&Contact GitHub support…',
+    click() {
+      shell.openExternal(
+        `https://github.com/contact?from_desktop_app=1&app_version=${app.getVersion()}`
+      )
+    },
+  }
+
+  const showUserGuides: Electron.MenuItemConstructorOptions = {
+    label: 'Show User Guides',
+    click() {
+      shell.openExternal('https://help.github.com/desktop/guides/')
+    },
+  }
+
   const showLogsItem: Electron.MenuItemConstructorOptions = {
     label: __DARWIN__ ? 'Show Logs in Finder' : 'S&how logs in Explorer',
     click() {
-      shell.showItemInFolder(getLogPath())
+      const logPath = getLogDirectoryPath()
+      mkdirIfNeeded(logPath)
+        .then(() => {
+          openDirectorySafe(logPath)
+        })
+        .catch(err => {
+          log('error', err.message)
+        })
     },
   }
 
   const helpItems = [
     submitIssueItem,
+    contactSupportItem,
+    showUserGuides,
     showLogsItem,
   ]
 
@@ -303,14 +364,14 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
       separator,
       {
         label: 'Crash main process…',
-        click () {
+        click() {
           throw new Error('Boomtown!')
         },
       },
       {
         label: 'Crash renderer process…',
         click: emit('boomtown'),
-      },
+      }
     )
   }
 
@@ -339,7 +400,11 @@ export function buildDefaultMenu(sharedProcess: SharedProcess): Electron.Menu {
   return Menu.buildFromTemplate(template)
 }
 
-type ClickHandler = (menuItem: Electron.MenuItem, browserWindow: Electron.BrowserWindow, event: Electron.Event) => void
+type ClickHandler = (
+  menuItem: Electron.MenuItem,
+  browserWindow: Electron.BrowserWindow,
+  event: Electron.Event
+) => void
 
 /**
  * Utility function returning a Click event handler which, when invoked, emits
@@ -362,7 +427,7 @@ enum ZoomDirection {
 }
 
 /** The zoom steps that we support, these factors must sorted */
-const ZoomInFactors = [ 1, 1.1, 1.25, 1.5, 1.75, 2 ]
+const ZoomInFactors = [1, 1.1, 1.25, 1.5, 1.75, 2]
 const ZoomOutFactors = ZoomInFactors.slice().reverse()
 
 /**
@@ -393,11 +458,9 @@ function zoom(direction: ZoomDirection): ClickHandler {
       webContents.setZoomFactor(1)
       webContents.send('zoom-factor-changed', 1)
     } else {
-      webContents.getZoomFactor((rawZoom) => {
-
-        const zoomFactors = direction === ZoomDirection.In
-          ? ZoomInFactors
-          : ZoomOutFactors
+      webContents.getZoomFactor(rawZoom => {
+        const zoomFactors =
+          direction === ZoomDirection.In ? ZoomInFactors : ZoomOutFactors
 
         // So the values that we get from getZoomFactor are floating point
         // precision numbers from chromium that don't always round nicely so
@@ -405,15 +468,16 @@ function zoom(direction: ZoomDirection): ClickHandler {
         // zoom factors the value is referring to.
         const currentZoom = findClosestValue(zoomFactors, rawZoom)
 
-        const nextZoomLevel = zoomFactors
-          .find(f => direction === ZoomDirection.In ? f > currentZoom : f < currentZoom)
+        const nextZoomLevel = zoomFactors.find(
+          f =>
+            direction === ZoomDirection.In ? f > currentZoom : f < currentZoom
+        )
 
         // If we couldn't find a zoom level (likely due to manual manipulation
         // of the zoom factor in devtools) we'll just snap to the closest valid
         // factor we've got.
-        const newZoom = nextZoomLevel === undefined
-          ? currentZoom
-          : nextZoomLevel
+        const newZoom =
+          nextZoomLevel === undefined ? currentZoom : nextZoomLevel
 
         webContents.setZoomFactor(newZoom)
         webContents.send('zoom-factor-changed', newZoom)

@@ -7,6 +7,10 @@ import { ToolbarDropdown, DropdownState } from './dropdown'
 import { IRepositoryState } from '../../lib/app-state'
 import { Branches } from '../branches'
 import { assertNever } from '../../lib/fatal-error'
+import { BranchesTab } from '../../models/branches-tab'
+import { enablePreviewFeatures } from '../../lib/feature-flag'
+import { PullRequest } from '../../models/pull-request'
+import { PullRequestBadge } from '../branches/pull-request-badge'
 
 interface IBranchDropdownProps {
   readonly dispatcher: Dispatcher
@@ -27,29 +31,40 @@ interface IBranchDropdownProps {
    * @param state    - The new state of the drop down
    */
   readonly onDropDownStateChanged: (state: DropdownState) => void
+
+  /** The currently selected tab. */
+  readonly selectedTab: BranchesTab
+
+  /** The open pull requests in the repository. */
+  readonly pullRequests: ReadonlyArray<PullRequest> | null
+
+  /** The pull request associated with the current branch. */
+  readonly currentPullRequest: PullRequest | null
 }
 
 /**
  * A drop down for selecting the currently checked out branch.
  */
-export class BranchDropdown extends React.Component<IBranchDropdownProps, void> {
+export class BranchDropdown extends React.Component<IBranchDropdownProps> {
   private renderBranchFoldout = (): JSX.Element | null => {
     const repositoryState = this.props.repositoryState
     const branchesState = repositoryState.branchesState
 
     const tip = repositoryState.branchesState.tip
-    const currentBranch = tip.kind === TipState.Valid
-      ? tip.branch
-      : null
+    const currentBranch = tip.kind === TipState.Valid ? tip.branch : null
 
-    return <Branches
-      allBranches={branchesState.allBranches}
-      recentBranches={branchesState.recentBranches}
-      currentBranch={currentBranch}
-      defaultBranch={branchesState.defaultBranch}
-      dispatcher={this.props.dispatcher}
-      repository={this.props.repository}
-    />
+    return (
+      <Branches
+        allBranches={branchesState.allBranches}
+        recentBranches={branchesState.recentBranches}
+        currentBranch={currentBranch}
+        defaultBranch={branchesState.defaultBranch}
+        dispatcher={this.props.dispatcher}
+        repository={this.props.repository}
+        selectedTab={this.props.selectedTab}
+        pullRequests={this.props.pullRequests}
+      />
+    )
   }
 
   private onDropDownStateChanged = (state: DropdownState) => {
@@ -62,7 +77,6 @@ export class BranchDropdown extends React.Component<IBranchDropdownProps, void> 
   }
 
   public render() {
-
     const repositoryState = this.props.repositoryState
     const branchesState = repositoryState.branchesState
 
@@ -75,6 +89,10 @@ export class BranchDropdown extends React.Component<IBranchDropdownProps, void> 
     let description = __DARWIN__ ? 'Current Branch' : 'Current branch'
     let canOpen = true
     let tooltip: string
+
+    if (this.props.currentPullRequest) {
+      icon = OcticonSymbol.gitPullRequest
+    }
 
     if (tip.kind === TipState.Unknown) {
       // TODO: this is bad and I feel bad
@@ -116,18 +134,35 @@ export class BranchDropdown extends React.Component<IBranchDropdownProps, void> 
     const isOpen = this.props.isOpen
     const currentState: DropdownState = isOpen && canOpen ? 'open' : 'closed'
 
-    return <ToolbarDropdown
-      className='branch-button'
-      icon={icon}
-      iconClassName={iconClassName}
-      title={title}
-      description={description}
-      tooltip={tooltip}
-      onDropdownStateChanged={this.onDropDownStateChanged}
-      dropdownContentRenderer={this.renderBranchFoldout}
-      dropdownState={currentState}
-      showDisclosureArrow={canOpen}
-      progressValue={progressValue}
-    />
+    return (
+      <ToolbarDropdown
+        className="branch-button"
+        icon={icon}
+        iconClassName={iconClassName}
+        title={title}
+        description={description}
+        tooltip={tooltip}
+        onDropdownStateChanged={this.onDropDownStateChanged}
+        dropdownContentRenderer={this.renderBranchFoldout}
+        dropdownState={currentState}
+        showDisclosureArrow={canOpen}
+        progressValue={progressValue}
+      >
+        {this.renderPullRequestInfo()}
+      </ToolbarDropdown>
+    )
+  }
+
+  private renderPullRequestInfo() {
+    const pr = this.props.currentPullRequest
+    if (!pr) {
+      return null
+    }
+
+    if (!enablePreviewFeatures()) {
+      return null
+    }
+
+    return <PullRequestBadge number={pr.number} status={pr.status} />
   }
 }
